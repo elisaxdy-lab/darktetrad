@@ -271,6 +271,9 @@
         // 后端地址：Supabase Edge Function
         // 若要改回本地自托管（server.py），把下面改成 ""
         const API_BASE = "https://rfqgzegjpfgmimfvbtcc.supabase.co/functions/v1";
+        // Supabase 项目的 publishable key（公钥）。前端放公钥是安全的：
+        // 数据表已开启 RLS 且不建任何 policy，拿到公钥也读不到任何一个激活码。
+        const SUPABASE_ANON_KEY = "sb_publishable_LWOQViD_u_IkhadGsO3wbA_wg3xxypF";
         const CODE_STORAGE_KEY = "dt_activation_v1"; // 仅用于“同浏览器免重复输入”
         let currentResult = null; // 服务端返回的结果数据；没有它就不出结果（防绕过）
 
@@ -280,9 +283,14 @@
             lastFailMsg = "";
             try {
                 // 注意：函数名用 dt-activate，避免与女神项目的 activate 函数冲突
+                const headers = { "Content-Type": "application/json" };
+                if(SUPABASE_ANON_KEY){
+                    headers["apikey"] = SUPABASE_ANON_KEY;
+                    headers["Authorization"] = "Bearer " + SUPABASE_ANON_KEY;
+                }
                 const res = await fetch(API_BASE + "/dt-activate", {
                     method: "POST",
-                    headers: { "Content-Type": "application/json" },
+                    headers,
                     body: JSON.stringify({ code, answers })
                 });
                 let data = null;
