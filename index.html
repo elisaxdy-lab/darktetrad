@@ -403,30 +403,31 @@
         $("unlock").style.display = "none";
         $("result").style.display = "block";
         const R = currentResult;
-        const scores = R.scores;
+        const scores = R.scores, levels = R.levels;
         const total = R.total, maxTotal = R.maxTotal;
-
-        $("dominantTrait").innerText = R.dominant.name;
-        $("dominantTrait").style.color = R.dominant.color;
-        const tb = band(total, maxTotal);
-        $("totalLine").innerText = `总分 ${total} / ${maxTotal} · 整体水平：${tb.level}`;
+        // 名称 / 颜色 / 描述用前端自带的 traits，分数和等级一律来自服务端
+        const dom = traits.find(t => t.key === R.dominant) || traits[0];
+        $("dominantTrait").innerText = dom.name;
+        $("dominantTrait").style.color = dom.color;
+        $("totalLine").innerText = `总分 ${total} / ${maxTotal} · 整体水平：${R.overall}`;
 
         const bars = $("bars"); bars.innerHTML = "";
-        R.traits.forEach(t => {
-            const s = t.score;
+        traits.forEach(t => {
+            const s = scores[t.key] || 0;
+            const lv = levels[t.key];
             const pct = (s/20)*100;
             const block = document.createElement("div");
             block.className = "bar-block";
             block.innerHTML = `
                 <div class="bar-head"><span style="color:${t.color};font-weight:700">${t.name}</span>
-                <span class="score">${s} / 20 · ${t.level}</span></div>
+                <span class="score">${s} / 20 · ${lv}</span></div>
                 <div class="bar-track"><div class="bar-fill" style="width:0%;background:${t.color}"></div></div>
                 <div class="scale-hint">${t.desc}</div>`;
             bars.appendChild(block);
             requestAnimationFrame(() => setTimeout(() => block.querySelector(".bar-fill").style.width = pct + "%", 60));
         });
 
-        drawRadar(scores, R.dominant.color);
+        drawRadar(scores, dom.color);
         buildInterpret(R);
         window.scrollTo({ top:0, behavior:"smooth" });
     }
@@ -454,13 +455,20 @@
         svg.innerHTML = h;
     }
 
+    const NOTE = { "低":"该特质表现较低，相对更重视合作与共情。",
+                   "中等":"该特质处于中等水平，视具体情境会有所体现。",
+                   "高":"该特质表现较高，建议留意其在关系与决策中的影响。" };
+    const OVERALL = { "低":"整体偏低，你通常更倾向于信赖、合作与利他。",
+                      "中等":"整体较为中性，黑暗特质在不同情境下都可能显现。",
+                      "高":"部分特质较为突出，可多反思其与人际交往的平衡。" };
     function buildInterpret(R){
         const box = $("interpret");
         let h = `<h3>命运解读</h3>`;
-        R.traits.forEach(t => {
-            h += `<p><span style="color:${t.color};font-weight:700">${t.name}（${t.score}/20，${t.level}）</span>：${t.desc} ${t.note}</p>`;
+        traits.forEach(t => {
+            const lv = R.levels[t.key];
+            h += `<p><span style="color:${t.color};font-weight:700">${t.name}（${R.scores[t.key]}/20，${lv}）</span>：${t.desc} ${NOTE[lv]}</p>`;
         });
-        h += `<p style="margin-top:12px;border-top:1px solid var(--line);padding-top:10px;">整体而言，你的黑暗人格总分 <b>${R.overall.total}/${R.overall.maxTotal}</b>，处于<b>${R.overall.level}</b>区间。${R.overall.text}</p>`;
+        h += `<p style="margin-top:12px;border-top:1px solid var(--line);padding-top:10px;">整体而言，你的黑暗人格总分 <b>${R.total}/${R.maxTotal}</b>，处于<b>${R.overall}</b>区间。${OVERALL[R.overall]}</p>`;
         box.innerHTML = h;
     }
 
