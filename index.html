@@ -272,7 +272,13 @@
         /* ===== 激活码：校验交由后端，前端只负责收集输入并请求 ===== */
         // 后端地址：Supabase Edge Function
         // 若要改回本地自托管（server.py），把下面改成 ""
-        const API_BASE = "https://rfqgzegjpfgmimfvbtcc.supabase.co/functions/v1";
+        // 验证服务双线路：优先走 Cloudflare 反代域名（国内可达性好），
+        // 失败自动回退 Supabase 直连；反代未生效时行为与直连完全一致
+        const API_BASES = [
+            "https://api.realmitera.com/functions/v1",               // Cloudflare Worker 反代
+            "https://rfqgzegjpfgmimfvbtcc.supabase.co/functions/v1"  // Supabase 直连（兜底）
+        ];
+        let goodBase = null; // 记住最近一次成功的线路，后续请求优先走它
         // Supabase 项目的 publishable key（公钥）。前端放公钥是安全的：
         // 数据表已开启 RLS 且不建任何 policy，拿到公钥也读不到任何一个激活码。
         const SUPABASE_ANON_KEY = "sb_publishable_LWOQViD_u_IkhadGsO3wbA_wg3xxypF";
@@ -283,37 +289,52 @@
 
         // 把激活码 + 16 题答案发给服务端：验码通过后由服务端算分并返回结果数据
         let lastFailMsg = ""; // 最近一次失败的具体原因（网络 / 服务 / 码错误分开提示）
-        async function requestResult(code){
-            lastFailMsg = "";
+
+        // 单次请求：带 9 秒超时，避免弱网下一直转圈无反馈
+        async function postActivate(base, code){
+            const headers = { "Content-Type": "application/json" };
+            if(SUPABASE_ANON_KEY){
+                headers["apikey"] = SUPABASE_ANON_KEY;
+                headers["Authorization"] = "Bearer " + SUPABASE_ANON_KEY;
+            }
+            const ctrl = new AbortController();
+            const timer = setTimeout(() => ctrl.abort(), 9000);
             try {
-                // 注意：函数名用 dt-activate，避免与女神项目的 activate 函数冲突
-                const headers = { "Content-Type": "application/json" };
-                if(SUPABASE_ANON_KEY){
-                    headers["apikey"] = SUPABASE_ANON_KEY;
-                    headers["Authorization"] = "Bearer " + SUPABASE_ANON_KEY;
-                }
-                const res = await fetch(API_BASE + "/dt-activate", {
+                // 函数名用 dt-activate，避免与女神项目的 activate 函数冲突
+                return await fetch(base + "/dt-activate", {
                     method: "POST",
                     headers,
-                    body: JSON.stringify({ code, answers })
+                    body: JSON.stringify({ code, answers }),
+                    signal: ctrl.signal
                 });
-                let data = null;
-                try { data = await res.json(); } catch(e){}
-                if(data && data.ok && data.result){
-                    currentResult = data.result;
-                    currentValidUntil = data.validUntil || null;
-                    saveResultCache(code, currentResult, currentValidUntil); // 存本机，供下次打开直接看
-                    return true;
-                }
-                // 失败原因要如实区分，不能一律说“激活码不正确”
-                if(res.status === 404) lastFailMsg = "验证服务未就绪（函数未部署），请稍后再试或联系博主。";
-                else if(res.status >= 500) lastFailMsg = "验证服务暂时不可用，请稍后再试。";
-                else lastFailMsg = (data && data.msg) ? data.msg : "激活码不正确，请前往小红书博主主页获取。";
-                return false;
-            } catch(e){
-                lastFailMsg = "网络异常，无法连接验证服务，请检查网络后重试。";
-                return false;
+            } finally { clearTimeout(timer); }
+        }
+
+        async function requestResult(code){
+            lastFailMsg = "";
+            // 优先上次成功的线路，其余线路依次兜底
+            const bases = goodBase ? [goodBase].concat(API_BASES.filter(b => b !== goodBase)) : API_BASES;
+            for(let i = 0; i < bases.length; i++){
+                try {
+                    const res = await postActivate(bases[i], code);
+                    let data = null;
+                    try { data = await res.json(); } catch(e){}
+                    if(data && data.ok && data.result){
+                        goodBase = bases[i]; // 记住这条可用线路
+                        currentResult = data.result;
+                        currentValidUntil = data.validUntil || null;
+                        saveResultCache(code, currentResult, currentValidUntil); // 存本机，供下次打开直接看
+                        return true;
+                    }
+                    // 该线路服务异常（函数未部署/服务端故障）→ 换下一条线路再试
+                    if(res.status === 404 || res.status >= 500) continue;
+                    // 服务端明确回答（如码错误/过期）→ 如实展示，不换线
+                    lastFailMsg = (data && data.msg) ? data.msg : "激活码不正确，请前往小红书博主主页获取。";
+                    return false;
+                } catch(e){ continue; } // 网络异常/超时 → 换下一条线路
             }
+            lastFailMsg = "网络异常，无法连接验证服务，请检查网络后重试。";
+            return false;
         }
 
         // ---- 上次结果缓存：有效期由服务端下发，过期自动作废，仍需重新激活 ----
